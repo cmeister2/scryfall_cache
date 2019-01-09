@@ -1,0 +1,18 @@
+language: python
+python:
+- 3.6
+- 3.5
+- 3.4
+- 2.7
+install: pip install -U tox-travis
+script: tox
+deploy:
+  provider: pypi
+  distributions: sdist bdist_wheel
+  user: cmeister2
+  password:
+    secure: cokuU61z+pu67RwrTVbuJgAAq31B+iJGrcNUxX4hGER2sJT1X3/WGtMLjpb5G7ri5uiKkjfssBktY8uHhj4Z+37UVN3a33Wp6dZWukPPFMLXRuHFcVUK4UhhO3thJk71J6YEEei99OvcDB06Ddf+w7ikSrzU6dcui5ncVrGKqh5OWBzgmdjICza7geljDczCh1bQQJkEt3MQdRtrOQR+E13mmI/8NqoRsN9LEeqBZGQPsR1q/mFwD+3NhE893YDSaUCVco7KIp6bjmmUg7LzFZZxWH1eJdkKwE2LSwcC17cpA2FFuaizEsVdcxAKbVed5anvDBS3YeBQbrbyE+cCG+QeL1VmZbd8LZyx8rufZNcPQlvFPQGUjuGUiZAJ6J+1/vc8PXF92sHdlJArIQU5m4sgG3aF6mPwkK6n4xrz/F/CtPum12snxhVvsKxnkZSMB67FxPIPd7hvjnUPkGTe8Bz1cRUtwLDSHcIEbDHzXLWTq/S0LWSxMH/Ke4LKu8BGVZm0StQDlDZkmxV5P8qPnTSTw2zKZ7qzsW1wk8+Y75gTx8motlDOOLxH7BkiUHRmphfXAxsaC6h9UYMButm/gma83u1frN93ApLT81EjBgF9fCyQZUJdL7DzFukvTBGGH6tVLNsd+gkPHZnq3kgqejXZejNZq4wyjEwcONW3QGE=
+  on:
+    tags: true
+    repo: cmeister2/scryfall_cache
+    python: 3.6
