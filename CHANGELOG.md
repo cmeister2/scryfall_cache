@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 
+## [0.1.1] - 2019-01-09
+### Changed
+- Fixed docs and added an example.
+
 ## [0.1.0] - 2019-01-09
 ### Added
 - Initial commit.
 
-[Unreleased]: https://github.com/cmeister2/scryfall_cache/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/cmeister2/scryfall_cache/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/cmeister2/scryfall_cache/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/cmeister2/scryfall_cache/tree/v0.1.0
