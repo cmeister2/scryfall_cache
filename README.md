@@ -13,8 +13,21 @@ Scryfall Cache is a library which minimizes the number of requests made to the S
 - Documentation: https://scryfall-cache.readthedocs.io.
 
 
-## Features
-- TODO
+## Example
+
+## Example
+
+    >>> from scryfall_cache import ScryfallCache
+
+    >>> cache = ScryfallCache(application="scryfall_tests")
+
+    >>> card = cache.card_from_mtgo_id(12345)
+    >>> card["name"]
+    'Phyrexian Processor'
+
+    >>> card["id"]
+    '6875ce99-badd-44da-8e5d-509600efa1d0'
+
 
 ## Credits
 
