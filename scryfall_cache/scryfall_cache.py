@@ -3,6 +3,7 @@
 
 import logging
 import os
+import shutil
 import time
 
 import appdirs
@@ -15,7 +16,7 @@ log = logging.getLogger(__name__)
 
 
 # Module information
-__version__ = "__version__ = '0.1.1'"
+__version__ = "0.1.1"
 __author__ = """Max Dymond"""
 __email__ = "cmeister2@gmail.com"
 package = "scryfall_cache"
@@ -48,12 +49,17 @@ class ScryfallCache(object):
     DATABASE_FILENAME = "scryfallcache.sqlite3"
 
     def __init__(
-        self, application=None, bulk_update_period=TWELVE_WEEKS, sql_debug=False
+        self,
+        application=None,
+        version=None,
+        bulk_update_period=TWELVE_WEEKS,
+        sql_debug=False,
     ):
         """Construct a ScryfallCache object.
 
         Args:
             application (str): Name of application to use for cached data.
+            version (str): Version string of application. If None, no version is used.
             bulk_update_period (int): The period after which the cache is bulk-updated.
             sql_debug (bool): Whether SQL debug commands are shown.
         """
@@ -67,10 +73,10 @@ class ScryfallCache(object):
 
         # Create an Appdirs instance to find where the local cache should
         # be stored.
-        self.app = appdirs.AppDirs(package, application, version=__version__)
+        self.app = appdirs.AppDirs(package, application, version=version)
 
-        # If the application folders do not exist, make them.
-        if not os.path.exists(self.app.user_data_dir):
+        # If the cache folders do not exist, make them.
+        if not os.path.isdir(self.app.user_data_dir):
             os.makedirs(self.app.user_data_dir)
 
         # Get the local database.
@@ -90,8 +96,81 @@ class ScryfallCache(object):
         # Check the database for an update.
         self._check_database()
 
-    def card_from_mtgo_id(self, mtgo_id):
-        """Request card data by MTGO ID.
+    def get_cache_directory(self):
+        """
+        Get the top level cache directory that this instance is using.
+
+        Useful for other libraries if they want to store data in
+        ScryfallCache's cache folder.
+
+        Returns:
+            str: the cache directory path.
+
+        """
+        return self.app.user_data_dir
+
+    def get_card(self, mtgo_id=None):
+        """
+        Attempt to get a ScryfallCard object for any given identifiers.
+
+        Args:
+            mtgo_id: The MTGO ID of the card if known.
+
+        Raises:
+            ScryfallCacheException: if no identifiers are given.
+
+        Returns:
+            ScryfallCard if ID found, else None.
+
+        """
+        if mtgo_id is None:
+            raise ScryfallCacheException("Require at least one identifier to query on")
+
+        # At the moment only MTGO ID is supported.
+        card_dict = self._card_from_mtgo_id(mtgo_id)
+        if not card_dict:
+            return None
+
+        # Found a card dictionary containing all the necessary information.
+        # Pass a ScryfallCard back to the user.
+        return ScryfallCard(self, card_dict)
+
+    def _card_from_id(self, scryfall_id):
+        """Request a card data dictionary by Scryfall ID.
+
+        Args:
+            scryfall_id(str): The Scryfall ID of the card.
+
+        Returns:
+            Dictionary of card data if card is found, else None.
+
+        """
+        with orm.db_session:
+            # This is safe because id is a primary key, so there should be 0
+            # or 1 entries.
+            result = Card.get(id=scryfall_id)
+
+        if result:
+            card_json = result.data
+        else:
+            log.debug("Card not found in database: %s", scryfall_id)
+
+            # Query the API for what Scryfall thinks is correct.
+            card_json = self._query_scryfall(
+                "https://api.scryfall.com/cards/{scryfall_id}".format(
+                    scryfall_id=scryfall_id
+                ),
+                timeout=ONE_DAY,
+            )
+
+            if card_json:
+                # Save this card for future as it wasn't found first time.
+                self._save_card(card_json)
+
+        return card_json
+
+    def _card_from_mtgo_id(self, mtgo_id):
+        """Request a card dictionary by MTGO ID.
 
         Args:
             mtgo_id(int): The MTGO ID of the card.
@@ -124,7 +203,21 @@ class ScryfallCache(object):
                 timeout=ONE_DAY,
             )
 
+            if card_json and len(cards_json) == 0:
+                # Save this card for future as no cards were found first time.
+                self._save_card(card_json)
+
         return card_json
+
+    def _save_card(self, card_data):
+        # Insert this into the database.
+        with orm.db_session:
+            log.debug("Saving card information to database for %s", card_data["id"])
+            Card(
+                id=card_data["id"],
+                mtgo_id=card_data.get("mtgo_id", None),
+                data=card_data,
+            )
 
     def _check_database(self):
         with orm.db_session:
@@ -191,6 +284,24 @@ class ScryfallCache(object):
             metadata.lastupdate = int(time.time())
             log.debug("Updated metadata: last update now %d", metadata.lastupdate)
 
+    def _download_scryfall_to_file(self, url, target_path):
+        tmp_file = "{0}._scry".format(target_path)
+        log.debug("Downloading %s to %s", url, tmp_file)
+
+        req = self.session.get(url, stream=True)
+        req.raise_for_status()
+
+        with open(tmp_file, "wb") as f:
+            for chunk in req.iter_content(chunk_size=1024):
+                if chunk:
+                    f.write(chunk)
+
+        log.debug("Downloaded %s to %s", url, tmp_file)
+
+        # Move the temporary file to the new destination.
+        shutil.move(tmp_file, target_path)
+        log.debug("Moved temporary download file %s to %s", tmp_file, target_path)
+
     def _query_scryfall(self, url, timeout=ONE_DAY):
         with orm.db_session:
             result = ScryfallResultCache.get(url=url)
@@ -220,9 +331,137 @@ class ScryfallCache(object):
             log.exception("Failed to find information from URL: %s", url)
             return None
 
+    def get_local_image_path(self, card, art_format):
+        """Retrieve the local image path for a given image.
+
+        If necessary, download the image into place before returning.
+
+        Args:
+            card (ScryfallCard): ScryfallCard object returned from get_card().
+            art_format (str): One of the art formats to download. See
+                https://scryfall.com/docs/api/images for more detail.
+
+        Raises:
+            ScryfallCacheException: on failure
+
+        Returns:
+            str: the file path
+
+        """
+        card_data = card.get_dict()
+
+        if "image_uris" not in card_data:
+            log.error("[%s] No images found", card)
+            raise ScryfallCacheException("No images found")
+
+        if art_format not in card_data["image_uris"]:
+            log.error("[%s] Format %r not found", card, art_format)
+            raise ScryfallCacheException("Art format {0} not found"
+                                         .format(art_format))
+
+        uri = card_data["image_uris"][art_format]
+        log.debug("[%s] Image URI for %r: %s", card, art_format, uri)
+
+        # Create the folders necessary to store this image.
+        art_cache_path = os.path.join(self.app.user_data_dir, "art_cache", art_format)
+
+        if not os.path.isdir(art_cache_path):
+            os.makedirs(art_cache_path)
+
+        # Determine the extension.  As per the API, everything is a JPG except PNG.
+        if art_format == "png":
+            extension = "png"
+        else:
+            extension = "jpg"
+
+        local_path = os.path.join(
+            art_cache_path,
+            "{id}.{extension}".format(id=card.get_id(), extension=extension),
+        )
+        log.debug("[%s] Local image path for %s: %s", card, art_format, local_path)
+
+        if not os.path.exists(local_path):
+            # Need to download that image!
+            self._download_scryfall_to_file(uri, local_path)
+
+        return local_path
+
+
+class ScryfallCard(object):
+    """Wrapper object for a Scryfall card data dictionary."""
+
+    def __init__(self, cache, card_dict):
+        """
+        Construct a ScryfallCard.
+
+        Args:
+            cache (ScryfallCache): reference to parent Cache object.
+            card_dict (dict): Card data dictionary.
+        """
+        self._id = card_dict["id"]
+        self._name = card_dict["name"]
+        self._cache = cache
+        self._card_dict = card_dict
+
+    def __repr__(self):
+        """
+        Return a str representation of this object when it was constructed.
+
+        Returns:
+            str: A representation of this object when it was constructed.
+
+        """
+        return "{self.__class__.__name__}({self._cache!r}, {self._card_dict!r})".format(
+            self=self
+        )
+
+    def __str__(self):
+        """
+        Return a useful str representation of this object.
+
+        Returns:
+            str: A useful representation of this object
+
+        """
+        return "{self.__class__.__name__}[{self._name} @ {self._id}]".format(self=self)
+
+    def get_id(self):
+        """
+        Return the Scryfall ID for this card.
+
+        Returns:
+            str: The Scryfall ID for this card.
+
+        """
+        return self._id
+
+    def get_dict(self):
+        """
+        Return the card data dictionary for this card.
+
+        Returns:
+            dict: The card data dictionary for this card.
+
+        """
+        return self._card_dict
+
+    def get_image_path(self, art_format):
+        """
+        Get or download the chosen art format for this card.
+
+        Args:
+            art_format (str): One of the art formats to download. See
+                https://scryfall.com/docs/api/images for more detail.
+
+        Returns:
+            str: Path to local file.
+
+        """
+        return self._cache.get_local_image_path(self, art_format)
+
 
 class Card(db.Entity):
-    """Card object as retrieved from Scryfall."""
+    """Card database object as retrieved from Scryfall."""
 
     id = orm.PrimaryKey(str)
     mtgo_id = orm.Optional(int, index=True)
@@ -241,12 +480,3 @@ class ScryfallResultCache(db.Entity):
     url = orm.PrimaryKey(str)
     timestamp = orm.Required(int)
     data = orm.Required(orm.Json)
-
-
-if __name__ == "__main__":
-    import sys
-
-    logging.basicConfig(
-        stream=sys.stdout, format="%(asctime)s %(message)s", level=logging.DEBUG
-    )
-    x = ScryfallCache("mynewapp")

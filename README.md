@@ -15,18 +15,19 @@ Scryfall Cache is a library which minimizes the number of requests made to the S
 
 ## Example
 
-## Example
-
-    >>> from scryfall_cache import ScryfallCache
+    >>> from scryfall_cache import ScryfallCache, ScryfallCacheException
+    >>> import os
 
     >>> cache = ScryfallCache(application="scryfall_tests")
 
-    >>> card = cache.card_from_mtgo_id(12345)
-    >>> card["name"]
-    'Phyrexian Processor'
+    >>> card = cache.get_card(mtgo_id=12345)
+    >>> str(card)
+    'ScryfallCard[Phyrexian Processor @ 6875ce99-badd-44da-8e5d-509600efa1d0]'
 
-    >>> card["id"]
-    '6875ce99-badd-44da-8e5d-509600efa1d0'
+    >>> # Download the card image as a PNG.
+    >>> image_path = card.get_image_path("png")
+    >>> os.path.basename(image_path)
+    '6875ce99-badd-44da-8e5d-509600efa1d0.png'
 
 
 ## Credits
