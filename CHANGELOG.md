@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 - Added the ability to download images to the cache.
+- Added the ability to query by name.
 
 ## [0.1.1] - 2019-01-09
 ### Changed

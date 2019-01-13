@@ -6,6 +6,11 @@ import os
 import shutil
 import time
 
+try:
+    from urllib.parse import urlencode
+except ImportError:
+    from urllib import urlencode
+
 import appdirs
 from pony import orm
 import requests
@@ -90,8 +95,23 @@ class ScryfallCache(object):
         db.bind(provider="sqlite", filename=self.database_path, create_db=True)
 
         # Create database tables if necessary.
-        orm.set_sql_debug(sql_debug)
-        db.generate_mapping(create_tables=True)
+        try:
+            orm.set_sql_debug(sql_debug)
+            db.generate_mapping(create_tables=True)
+
+        except orm.dbapiprovider.OperationalError as e:
+            # There was a problem when checking the database. Drop the tables (with
+            # all data) and recreate the tables. This is currently our fix for
+            # schema migration while Pony does not support migration.
+            log.warning(
+                "Hit problem while checking database. "
+                "Recreating tables to attempt recovery."
+            )
+            log.debug("Dropping tables")
+            db.drop_all_tables(with_all_data=True)
+
+            log.debug("Creating tables")
+            db.create_tables()
 
         # Check the database for an update.
         self._check_database()
@@ -109,12 +129,14 @@ class ScryfallCache(object):
         """
         return self.app.user_data_dir
 
-    def get_card(self, mtgo_id=None):
+    def get_card(self, name=None, scryfall_id=None, mtgo_id=None):
         """
         Attempt to get a ScryfallCard object for any given identifiers.
 
         Args:
-            mtgo_id: The MTGO ID of the card if known.
+            name (str): The name of the card if known.
+            scryfall_id (str): The Scryfall ID of the card if known.
+            mtgo_id (int): The MTGO ID of the card if known.
 
         Raises:
             ScryfallCacheException: if no identifiers are given.
@@ -123,11 +145,16 @@ class ScryfallCache(object):
             ScryfallCard if ID found, else None.
 
         """
-        if mtgo_id is None:
+        if name is not None:
+            card_dict = self._card_from_name(name)
+        elif scryfall_id is not None:
+            card_dict = self._card_from_id(scryfall_id)
+        elif mtgo_id is not None:
+            card_dict = self._card_from_mtgo_id(mtgo_id)
+        else:
             raise ScryfallCacheException("Require at least one identifier to query on")
 
-        # At the moment only MTGO ID is supported.
-        card_dict = self._card_from_mtgo_id(mtgo_id)
+        # Check the card dictionary.
         if not card_dict:
             return None
 
@@ -165,6 +192,45 @@ class ScryfallCache(object):
 
             if card_json:
                 # Save this card for future as it wasn't found first time.
+                self._save_card(card_json)
+
+        return card_json
+
+    def _card_from_name(self, name):
+        """Request a card dictionary by name.
+
+        Args:
+            name (str): The name of the card.
+
+        Returns:
+            Dictionary of card data if card is found, else None.
+
+        """
+        with orm.db_session:
+            results = orm.select(c for c in Card if c.name == name)
+            if not results:
+                results = []
+
+            cards_json = [m.data for m in results]
+
+        if len(cards_json) == 1:
+            log.debug("Returning single result for name %s", name)
+            card_json = cards_json[0]
+
+        else:
+            log.debug("Got %d results for name %s", len(cards_json), name)
+
+            # Encode the URL parameters.
+            params = urlencode({"exact": name})
+
+            # Query the API for what Scryfall thinks is correct.
+            card_json = self._query_scryfall(
+                "https://api.scryfall.com/cards/named?{params}".format(params=params),
+                timeout=ONE_DAY,
+            )
+
+            if card_json and len(cards_json) == 0:
+                # Save this card for future as no cards were found first time.
                 self._save_card(card_json)
 
         return card_json
@@ -215,6 +281,7 @@ class ScryfallCache(object):
             log.debug("Saving card information to database for %s", card_data["id"])
             Card(
                 id=card_data["id"],
+                name=card_data["name"],
                 mtgo_id=card_data.get("mtgo_id", None),
                 data=card_data,
             )
@@ -224,7 +291,9 @@ class ScryfallCache(object):
             metadata = orm.select(m for m in Metadata).first()
 
             if not metadata:
-                metadata = Metadata(lastupdate=0)
+                # Create a new metadata object. Record the version of ScryfallCache
+                # that we're using here, so we can migrate later.
+                metadata = Metadata(lastupdate=0, version=__version__)
 
         if metadata.lastupdate + self.bulk_update_period < time.time():
             log.debug(
@@ -266,10 +335,13 @@ class ScryfallCache(object):
 
         with orm.db_session:
             for card_obj in bulk_data_list_req.json():
-                mtgo_id = card_obj.get("mtgo_id", None)
-
                 # Create the card.
-                Card(id=card_obj["id"], mtgo_id=mtgo_id, data=card_obj)
+                Card(
+                    id=card_obj["id"],
+                    name=card_obj["name"],
+                    mtgo_id=card_obj.get("mtgo_id", None),
+                    data=card_obj,
+                )
 
         log.debug("Finished bulk card insertion")
 
@@ -356,8 +428,7 @@ class ScryfallCache(object):
 
         if art_format not in card_data["image_uris"]:
             log.error("[%s] Format %r not found", card, art_format)
-            raise ScryfallCacheException("Art format {0} not found"
-                                         .format(art_format))
+            raise ScryfallCacheException("Art format {0} not found".format(art_format))
 
         uri = card_data["image_uris"][art_format]
         log.debug("[%s] Image URI for %r: %s", card, art_format, uri)
@@ -435,6 +506,16 @@ class ScryfallCard(object):
         """
         return self._id
 
+    def get_name(self):
+        """
+        Return the name for this card.
+
+        Returns:
+            str: The name of this card.
+
+        """
+        return self._name
+
     def get_dict(self):
         """
         Return the card data dictionary for this card.
@@ -464,14 +545,16 @@ class Card(db.Entity):
     """Card database object as retrieved from Scryfall."""
 
     id = orm.PrimaryKey(str)
+    name = orm.Required(str, index=True)
     mtgo_id = orm.Optional(int, index=True)
     data = orm.Required(orm.Json)
 
 
 class Metadata(db.Entity):
-    """Metadata about the cache information."""
+    """Metadata about the cache."""
 
     lastupdate = orm.Required(int)
+    version = orm.Required(str)
 
 
 class ScryfallResultCache(db.Entity):
