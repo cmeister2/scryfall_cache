@@ -29,6 +29,9 @@ Scryfall Cache is a library which minimizes the number of requests made to the S
     >>> os.path.basename(image_path)
     '6875ce99-badd-44da-8e5d-509600efa1d0.png'
 
+    >>> card_two = cache.get_card(name="Black Lotus")
+    >>> str(card_two)
+    'ScryfallCard[Black Lotus @ bd8fa327-dd41-4737-8f19-2cf5eb1f7cdd]'
 
 ## Credits
 

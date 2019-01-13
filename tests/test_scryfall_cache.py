@@ -43,7 +43,7 @@ def test_card_images(scrycache):
         scrycache: The cache under test
 
     """
-    card = scrycache.get_card(12345)
+    card = scrycache.get_card(mtgo_id=12345)
     path = card.get_image_path("png")
     print(path)
 
@@ -57,3 +57,15 @@ def test_card_images(scrycache):
 
     cache_path = os.path.join("art_crop", "6875ce99-badd-44da-8e5d-509600efa1d0.jpg")
     assert crop_path.endswith(cache_path)
+
+
+def test_query_name(scrycache):
+    """
+    Test querying for a name.
+
+    Args:
+        scrycache: The cache under test
+
+    """
+    card = scrycache.get_card(name="Black Lotus")
+    assert card.get_name() == "Black Lotus"
