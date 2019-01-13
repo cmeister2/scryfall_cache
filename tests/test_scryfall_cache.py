@@ -69,3 +69,17 @@ def test_query_name(scrycache):
     """
     card = scrycache.get_card(name="Black Lotus")
     assert card.get_name() == "Black Lotus"
+
+
+def test_mtgo_foil(scrycache):
+    """
+    Explicitly get card 31156 on MTGO.
+
+    This is a foil Swamp. We should be able to match 31156 to that card object.
+
+    Args:
+        scrycache: The cache under test.
+
+    """
+    card = scrycache.get_card(mtgo_id=31156)
+    assert card.get_name() == "Swamp"

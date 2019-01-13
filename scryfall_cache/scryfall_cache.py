@@ -246,7 +246,10 @@ class ScryfallCache(object):
 
         """
         with orm.db_session:
-            results = orm.select(c for c in Card if c.mtgo_id == mtgo_id)
+            # Search for the normal or foil version of the card.
+            results = orm.select(
+                c for c in Card if c.mtgo_id == mtgo_id or c.mtgo_foil_id == mtgo_id
+            )
             if not results:
                 results = []
 
@@ -283,6 +286,7 @@ class ScryfallCache(object):
                 id=card_data["id"],
                 name=card_data["name"],
                 mtgo_id=card_data.get("mtgo_id", None),
+                mtgo_foil_id=card_data.get("mtgo_foil_id", None),
                 data=card_data,
             )
 
@@ -340,6 +344,7 @@ class ScryfallCache(object):
                     id=card_obj["id"],
                     name=card_obj["name"],
                     mtgo_id=card_obj.get("mtgo_id", None),
+                    mtgo_foil_id=card_obj.get("mtgo_foil_id", None),
                     data=card_obj,
                 )
 
@@ -547,6 +552,7 @@ class Card(db.Entity):
     id = orm.PrimaryKey(str)
     name = orm.Required(str, index=True)
     mtgo_id = orm.Optional(int, index=True)
+    mtgo_foil_id = orm.Optional(int, index=True)
     data = orm.Required(orm.Json)
 
 
