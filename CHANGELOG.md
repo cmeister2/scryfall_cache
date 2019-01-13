@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+
+## [0.2.0] - 2019-01-13
+### Added
 - Added the ability to download images to the cache.
 - Added the ability to query by name.
 
@@ -17,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial commit.
 
-[Unreleased]: https://github.com/cmeister2/scryfall_cache/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/cmeister2/scryfall_cache/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/cmeister2/scryfall_cache/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/cmeister2/scryfall_cache/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/cmeister2/scryfall_cache/tree/v0.1.0
