@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+cd /src
+export LC_ALL=C.UTF-8
+export LANG=C.utf8
+export PACKAGE_NAME=scryfall_cache
+
+export PS1='\[\e[1;34m\]floki:scryfall_cache\[\e[m\] [\[\e[1;93m\]\W\[\e[m\]]\$ '
+
+# Install the packages
+echo "Installing packages"
+pip install --quiet -e .
+pip install --quiet -r requirements_dev.txt
+
+echo "Standard commands:"
+echo "alias flakelint='flake8 $PACKAGE_NAME'" >> ~/.bashrc
+echo "alias lint='flakelint && echo Passed'" >> ~/.bashrc
+echo "- lint: Test code changes"
