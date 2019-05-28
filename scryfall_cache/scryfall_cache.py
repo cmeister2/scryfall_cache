@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 
 
 # Module information
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 __author__ = """Max Dymond"""
 __email__ = "cmeister2@gmail.com"
 package = "scryfall_cache"
