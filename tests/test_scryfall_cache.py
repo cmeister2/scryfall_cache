@@ -10,16 +10,18 @@ import scryfall_cache
 
 # Have to define the scryfall cache at the session scope - there can be only
 # one otherwise Pony gets a bit upset.
-@pytest.fixture(scope="session")
+@pytest.fixture
 def scrycache():
     """
-    Create a test session scope ScryfallCache.
+    Create a function scope ScryfallCache.
 
     Returns:
         scryfall_cache.ScryfallCache: cache object.
 
     """
-    return scryfall_cache.ScryfallCache(application="scryfall_tests")
+    cache = scryfall_cache.ScryfallCache(application="scryfall_tests")
+    yield cache
+    cache.close()
 
 
 def test_query_mtgo_id(scrycache):

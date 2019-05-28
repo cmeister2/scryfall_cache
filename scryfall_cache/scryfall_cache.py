@@ -37,10 +37,6 @@ ONE_DAY = 24 * 60 * 60
 TWELVE_WEEKS = 12 * 7 * ONE_DAY
 
 
-# Database for Pony abstraction.
-db = orm.Database()
-
-
 class ScryfallCacheException(Exception):
     """Exception raised by ScryfallCache."""
 
@@ -91,27 +87,8 @@ class ScryfallCache(object):
 
         log.debug("Scryfall database path: %s", self.database_path)
 
-        # Create the database if it doesn't exist.
-        db.bind(provider="sqlite", filename=self.database_path, create_db=True)
-
-        # Create database tables if necessary.
-        try:
-            orm.set_sql_debug(sql_debug)
-            db.generate_mapping(create_tables=True)
-
-        except orm.dbapiprovider.OperationalError as e:
-            # There was a problem when checking the database. Drop the tables (with
-            # all data) and recreate the tables. This is currently our fix for
-            # schema migration while Pony does not support migration.
-            log.warning(
-                "Hit problem while checking database. "
-                "Recreating tables to attempt recovery."
-            )
-            log.debug("Dropping tables")
-            db.drop_all_tables(with_all_data=True)
-
-            log.debug("Creating tables")
-            db.create_tables()
+        # Create local instances of database objects
+        self.db = open_database(self.database_path, create_db=True, sql_debug=sql_debug)
 
         # Check the database for an update.
         self._check_database()
@@ -175,7 +152,7 @@ class ScryfallCache(object):
         with orm.db_session:
             # This is safe because id is a primary key, so there should be 0
             # or 1 entries.
-            result = Card.get(id=scryfall_id)
+            result = self.db.Card.get(id=scryfall_id)
 
         if result:
             card_json = result.data
@@ -207,7 +184,7 @@ class ScryfallCache(object):
 
         """
         with orm.db_session:
-            results = orm.select(c for c in Card if c.name == name)
+            results = orm.select(c for c in self.db.Card if c.name == name)
             if not results:
                 results = []
 
@@ -248,7 +225,8 @@ class ScryfallCache(object):
         with orm.db_session:
             # Search for the normal or foil version of the card.
             results = orm.select(
-                c for c in Card if c.mtgo_id == mtgo_id or c.mtgo_foil_id == mtgo_id
+                c for c in self.db.Card
+                if c.mtgo_id == mtgo_id or c.mtgo_foil_id == mtgo_id
             )
             if not results:
                 results = []
@@ -282,7 +260,7 @@ class ScryfallCache(object):
         # Insert this into the database.
         with orm.db_session:
             log.debug("Saving card information to database for %s", card_data["id"])
-            Card(
+            self.db.Card(
                 id=card_data["id"],
                 name=card_data["name"],
                 mtgo_id=card_data.get("mtgo_id", None),
@@ -292,12 +270,12 @@ class ScryfallCache(object):
 
     def _check_database(self):
         with orm.db_session:
-            metadata = orm.select(m for m in Metadata).first()
+            metadata = orm.select(m for m in self.db.Metadata).first()
 
             if not metadata:
                 # Create a new metadata object. Record the version of ScryfallCache
                 # that we're using here, so we can migrate later.
-                metadata = Metadata(lastupdate=0, version=__version__)
+                metadata = self.db.Metadata(lastupdate=0, version=__version__)
 
         if metadata.lastupdate + self.bulk_update_period < time.time():
             log.debug(
@@ -308,7 +286,7 @@ class ScryfallCache(object):
     def _bulk_clear_database(self):
         # We need to clear the database out. Delete all the cards in the database.
         with orm.db_session:
-            orm.delete(c for c in Card)
+            orm.delete(c for c in self.db.Card)
 
     def _bulk_update_database(self):
         # Request the /bulkdata endpoint from Scryfall. Do not request this from cache.
@@ -340,7 +318,7 @@ class ScryfallCache(object):
         with orm.db_session:
             for card_obj in bulk_data_list_req.json():
                 # Create the card.
-                Card(
+                self.db.Card(
                     id=card_obj["id"],
                     name=card_obj["name"],
                     mtgo_id=card_obj.get("mtgo_id", None),
@@ -355,7 +333,7 @@ class ScryfallCache(object):
 
     def _update_metadata(self):
         with orm.db_session:
-            metadata = orm.select(m for m in Metadata).first()
+            metadata = orm.select(m for m in self.db.Metadata).first()
 
             # Update the timestamp
             metadata.lastupdate = int(time.time())
@@ -381,7 +359,7 @@ class ScryfallCache(object):
 
     def _query_scryfall(self, url, timeout=ONE_DAY):
         with orm.db_session:
-            result = ScryfallResultCache.get(url=url)
+            result = self.db.ScryfallResultCache.get(url=url)
 
         now = int(time.time())
 
@@ -400,7 +378,7 @@ class ScryfallCache(object):
             # Store the result in the database.
             with orm.db_session:
                 log.debug("Storing result for url %s at timestamp %d", url, now)
-                ScryfallResultCache(url=url, timestamp=now, data=card_data)
+                self.db.ScryfallResultCache(url=url, timestamp=now, data=card_data)
 
             return card_data
 
@@ -461,6 +439,10 @@ class ScryfallCache(object):
             self._download_scryfall_to_file(uri, local_path)
 
         return local_path
+
+    def close(self):
+        """Close the connection to the database."""
+        self.db.disconnect()
 
 
 class ScryfallCard(object):
@@ -546,26 +528,71 @@ class ScryfallCard(object):
         return self._cache.get_local_image_path(self, art_format)
 
 
-class Card(db.Entity):
-    """Card database object as retrieved from Scryfall."""
+def define_entities(db):
+    """Define entities on a database object.
 
-    id = orm.PrimaryKey(str)
-    name = orm.Required(str, index=True)
-    mtgo_id = orm.Optional(int, index=True)
-    mtgo_foil_id = orm.Optional(int, index=True)
-    data = orm.Required(orm.Json)
+    Args:
+        db (orm.Database): Database object to define entities on.
+    """
+    class Card(db.Entity):
+        """Card database object as retrieved from Scryfall."""
+
+        id = orm.PrimaryKey(str)
+        name = orm.Required(str, index=True)
+        mtgo_id = orm.Optional(int, index=True)
+        mtgo_foil_id = orm.Optional(int, index=True)
+        data = orm.Required(orm.Json)
+
+    class Metadata(db.Entity):
+        """Metadata about the cache."""
+
+        lastupdate = orm.Required(int)
+        version = orm.Required(str)
+
+    class ScryfallResultCache(db.Entity):
+        """URL response retrieved from Scryfall."""
+
+        url = orm.PrimaryKey(str)
+        timestamp = orm.Required(int)
+        data = orm.Required(orm.Json)
 
 
-class Metadata(db.Entity):
-    """Metadata about the cache."""
+def open_database(database_path, create_db=True, sql_debug=False):
+    """Create a connection to an sqlite database.
 
-    lastupdate = orm.Required(int)
-    version = orm.Required(str)
+    Args:
+        database_path (str): Path to the sqlite database.
+        create_db (bool): Whether to create the database if it doesn't exist.
+        sql_debug (bool): Whether to enable SQL debugging
 
+    Returns:
+        Database object
 
-class ScryfallResultCache(db.Entity):
-    """URL response retrieved from Scryfall."""
+    """
+    # Create a database object using Pony for abstraction.
+    db = orm.Database()
+    define_entities(db)
 
-    url = orm.PrimaryKey(str)
-    timestamp = orm.Required(int)
-    data = orm.Required(orm.Json)
+    # Bind to the database at the given path.
+    db.bind(provider="sqlite", filename=database_path, create_db=create_db)
+
+    # Create database tables if necessary.
+    try:
+        orm.set_sql_debug(sql_debug)
+        db.generate_mapping(create_tables=True)
+
+    except orm.dbapiprovider.OperationalError as e:
+        # There was a problem when checking the database. Drop the tables (with
+        # all data) and recreate the tables. This is currently our fix for
+        # schema migration while Pony does not support migration.
+        log.warning(
+            "Hit problem while checking database. "
+            "Recreating tables to attempt recovery."
+        )
+        log.debug("Dropping tables")
+        db.drop_all_tables(with_all_data=True)
+
+        log.debug("Creating tables")
+        db.create_tables()
+
+    return db
